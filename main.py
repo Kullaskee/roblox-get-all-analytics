@@ -1,7 +1,11 @@
-import requests, time
+import requests, time, json
 
 
 ROBLOSECURITY = open("ROBLOSECURITY.txt", "r").read()
+game_data_folder = "./GameData/"
+breakdowns = ["AgeGroup", "Country", "Gender"]
+todays_date = time.strftime("%Y-%m-%d")
+todays_date_string = "2024-06-24T00:00:00.000Z" #edit this to be a few days behind current day!!!!!
 
 def format_number(number):
     return "{:,}".format(number)
@@ -34,13 +38,12 @@ class roblox_api:
             'x-csrf-token': self.get_xsrf_token(),
             'Content-Type': 'application/json'
         };
-        todays_date = time.strftime("%Y-%m-%d")
         data = {
-            "breakdowns": ["AgeGroup"],
+            "breakdowns": ["AgeGroup"], 
             "granularity": "OneDay",
             "metric":"MonthlyActiveUsers",
-            "startTime":todays_date,
-            "endTime": todays_date"
+            "startTime":todays_date_string,
+            "endTime": todays_date_string
         };
         try:
             response = self.session.post(url, headers=headers, data=json.dumps(data))
@@ -49,15 +52,41 @@ class roblox_api:
         except:
             return False
 
+    def get_expirence_demographic(self, universeId, breakdown):
+        url = "https://apis.roblox.com/developer-analytics-aggregations/v1/metrics/engagement/universes/{}".format(universeId)
+        headers = {
+            'x-csrf-token': self.get_xsrf_token(),
+            'Content-Type': 'application/json'
+        };
+        data = {
+            "breakdown": ["{}".format(breakdown)], 
+            "granularity": "OneDay",
+            "metric":"MonthlyActiveUsers",
+            "startTime": todays_date_string,
+            "endTime": todays_date_string
+        };
+        response = self.session.post(url, headers=headers, data=json.dumps(data))
+
+        fetched_data = {}
+
+        for data in json.loads(response.text)["values"]:
+            fetched_data[data["breakdowns"][0]["value"]] = data["datapoints"][0]["value"]
+
+        return fetched_data
+
+
+
 
 roblox = roblox_api()
 total = 0
 
-outputfile = open('output.csv', 'a')
+outputfile = open('Data-{}-MAU.csv'.format(todays_date), 'a')
+file_prefix = "Data-{}".format(todays_date)
 
 for group in roblox.get_groups():
     groupId = group["id"]
     groupName = group["name"]
+    print("Group: {}".format(groupName))
     for game_data in roblox.get_games(groupId):
         universeId = game_data["id"]
         expirenceName = game_data["name"]
@@ -67,9 +96,26 @@ for group in roblox.get_groups():
             continue
         else:
             total += MAU
-            print("{} - {}".format(expirenceName, format_number(MAU)))
-            decoded_name = expirenceName.encode('ascii', 'ignore').replace(",", "")
-            outputfile.write("{},{}\n".format(decoded_name, MAU))
+            #ascii decode
+            decoded_expirence_name = expirenceName.encode('ascii', 'ignore').decode('ascii').replace(",", "").replace("/", "")
+            decoded_group_name = groupName.encode('ascii', 'ignore').decode('ascii').replace(",", "").replace("/", "")
+            outputfile.write("{},{}\n".format(decoded_expirence_name, MAU))
 
-outputfile.close()
-print("Total MAU: {}".format(format_number(total)))
+
+
+            for breakdown in breakdowns:
+                data = roblox.get_expirence_demographic(universeId, breakdown)
+                for key, value in data.items():
+                    print("{},{},{},{}".format(decoded_group_name, decoded_expirence_name, key, value))
+
+                    group_link = "https://www.roblox.com/groups/{}/x".format(groupId)
+                    
+                    game_specific_breakdown_file = open("{}/{}-{}.csv".format(game_data_folder, decoded_expirence_name, breakdown), 'a')
+                    game_specific_breakdown_file.write("{},{}\n".format(key, value))
+                    game_specific_breakdown_file.close()
+
+                    everything_breakdown_file = open("{}-{}.csv".format(file_prefix, breakdown), 'a')
+                    everything_breakdown_file.write("{},{},{},{},{}\n".format(decoded_group_name, decoded_expirence_name, key, value, group_link))
+                    everything_breakdown_file.close()
+            
+            print("{} - {}".format(expirenceName, format_number(MAU)))
